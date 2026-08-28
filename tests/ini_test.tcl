@@ -347,4 +347,74 @@ test mutators-round-trip-through-serialize {a mutated config serialises and repa
     list [ini::get $back server host] [ini::get $back server port]
 } -result {example.com 8080}
 
-cleanupTests
+# --- file IO -----------------------------------------------------------------
+
+set scratch [file join [::tcltest::temporaryDirectory] ini-file-tests]
+file mkdir $scratch
+
+proc scratchPath {name} {
+    return [file join $::scratch $name]
+}
+
+test write-then-read {a config survives a write/read round trip} -body {
+    set p [scratchPath roundtrip.ini]
+    set c [ini::put [ini::put [ini::parse ""] server host example.com] server port 8080]
+    ini::write_file $p $c
+    set back [ini::read_file $p]
+    list [ini::get $back server host] [ini::get $back server port]
+} -result {example.com 8080}
+
+test write-preserves-awkward-values {quoting survives the trip through a file} -body {
+    set p [scratchPath awkward.ini]
+    set c [ini::parse ""]
+    set c [ini::put $c s padded "  spaced  "]
+    set c [ini::put $c s blank ""]
+    set c [ini::put $c s colour "#ff0000"]
+    ini::write_file $p $c
+    set back [ini::read_file $p]
+    list [ini::get $back s padded] [ini::get $back s blank] [ini::get $back s colour]
+} -result {{  spaced  } {} #ff0000}
+
+test write-replaces-an-existing-file {writing over a file replaces it} -body {
+    set p [scratchPath replace.ini]
+    ini::write_file $p [ini::put [ini::parse ""] s k first]
+    ini::write_file $p [ini::put [ini::parse ""] s k second]
+    ini::get [ini::read_file $p] s k
+} -result second
+
+test write-leaves-no-temp-file {the temp file is renamed away, not left behind} -body {
+    set p [scratchPath notemp.ini]
+    ini::write_file $p [ini::put [ini::parse ""] s k v]
+    llength [glob -nocomplain -directory $::scratch -types hidden *tmp]
+} -result 0
+
+test read-of-a-missing-file-errors {a missing file is an error, not an empty config} -body {
+    ini::read_file [scratchPath does-not-exist.ini]
+} -returnCodes error -match glob -result {*}
+
+test read-parses-crlf {a CRLF file reads the same as LF} -body {
+    set p [scratchPath crlf.ini]
+    set fh [open $p wb]
+    puts -nonewline $fh "\[s\]\r\nkey = value\r\n"
+    close $fh
+    ini::get [ini::read_file $p] s key
+} -result value
+
+test read-propagates-parse-errors {a malformed file raises the parse error} -body {
+    set p [scratchPath bad.ini]
+    set fh [open $p w]
+    puts $fh "\[s\]"
+    puts $fh "nonsense line"
+    close $fh
+    ini::read_file $p
+} -returnCodes error -match glob -result {line 2:*}
+
+test write-then-read-empty {an empty config round-trips} -body {
+    set p [scratchPath empty.ini]
+    ini::write_file $p [ini::parse ""]
+    ini::sections [ini::read_file $p]
+} -result {}
+
+::tcltest::cleanupTests
+file delete -force $scratch
+return

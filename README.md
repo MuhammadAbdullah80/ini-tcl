@@ -31,6 +31,8 @@ header live in the section named `""`.
 | `ini::remove config section key` | a copy without that key |
 | `ini::remove_section config section` | a copy without that section |
 | `ini::merge base overlay` | a copy of base with overlay applied per key |
+| `ini::read_file path` | parse a file |
+| `ini::write_file path config` | serialise and write, atomically |
 
 ## Decisions
 
@@ -86,13 +88,31 @@ the global one, so a proc named `ini::set` shadows the builtin `set` for every
 other proc in the namespace. `ini::parse` opens with `set result [dict create]`
 and would break with a wrong-arg-count error.
 
+## Files
+
+```tcl
+set config [ini::read_file /etc/myapp.ini]
+set config [ini::put $config server port 9090]
+ini::write_file /etc/myapp.ini $config
+```
+
+Both force the channel to utf-8 with lf translation rather than trusting the
+platform default, so a file written on Windows and read on Linux gives the same
+values.
+
+`write_file` writes a sibling temp file and renames it into place. A half-written
+config is worse than no config: whatever reads it next either fails to parse or,
+worse, parses a truncated file and starts with settings silently missing. The
+rename is atomic within a filesystem, which is why the temp file is a sibling
+rather than in `/tmp`.
+
 ## Tests
 
 ```
 tclsh tests/ini_test.tcl
 ```
 
-68 tests via `tcltest`.
+76 tests via `tcltest`.
 
 One note for anyone extending them: Tcl dicts compare as their string
 representation, which carries insertion order. Two dicts holding identical data

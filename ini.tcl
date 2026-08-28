@@ -13,6 +13,7 @@ package require Tcl 8.6
 namespace eval ini {
     namespace export parse serialize get exists sections keys
     namespace export put remove remove_section merge
+    namespace export read_file write_file
     variable version 0.1.0
 }
 
@@ -220,6 +221,50 @@ proc ini::EmitPair {key value} {
         return "$key = \"$value\""
     }
     return "$key = $value"
+}
+
+# Reads and parses a file.
+#
+# The channel is forced to utf-8 with lf translation rather than left on the
+# platform default, so the same file parses identically on Windows and Unix.
+# `parse` already tolerates CRLF, but reading as binary-ish lf keeps the values
+# byte-identical either way.
+proc ini::read_file {path} {
+    set fh [open $path r]
+    try {
+        fconfigure $fh -encoding utf-8 -translation lf
+        set text [read $fh]
+    } finally {
+        close $fh
+    }
+    return [ini::parse $text]
+}
+
+# Serialises config and writes it to path, replacing any existing file.
+#
+# Writes to a temporary file in the same directory and renames it into place.
+# A half-written config is worse than no config at all: the process that reads
+# it next will either fail to parse or, worse, parse a truncated file and start
+# with some settings silently missing. `file rename -force` within one
+# filesystem is atomic, and the temp file is a sibling to guarantee that.
+proc ini::write_file {path config} {
+    set dir [file dirname $path]
+    set tmp [file join $dir ".[file tail $path].[pid].tmp"]
+
+    set fh [open $tmp w]
+    try {
+        fconfigure $fh -encoding utf-8 -translation lf
+        puts $fh [ini::serialize $config]
+    } on error {msg opts} {
+        close $fh
+        catch {file delete -- $tmp}
+        return -options $opts $msg
+    } finally {
+        catch {close $fh}
+    }
+
+    file rename -force -- $tmp $path
+    return
 }
 
 package provide ini $ini::version
