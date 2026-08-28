@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tcl
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y tcl tcllib
+      - name: Tcl version
+        run: echo 'puts [info patchlevel]' | tclsh
+      - name: Run test suite
+        run: tclsh tests/ini_test.tcl
+      - name: Check the package loads through pkgIndex
+        run: |
+          echo 'set auto_path [linsert $auto_path 0 .]; package require ini; puts "loaded ini [package present ini]"' | tclsh
