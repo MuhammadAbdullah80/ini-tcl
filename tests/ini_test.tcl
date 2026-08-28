@@ -231,4 +231,120 @@ test roundtrip-empty {an empty document round-trips} -body {
     ini::serialize [ini::parse ""]
 } -result {}
 
+# --- mutation --------------------------------------------------------------
+
+test put-adds-a-key {put adds a key to an existing section} -body {
+    ini::get [ini::put [ini::parse "\[s\]\na = 1"] s b 2] s b
+} -result 2
+
+test put-overwrites {put replaces an existing value} -body {
+    ini::get [ini::put [ini::parse "\[s\]\na = 1"] s a 9] s a
+} -result 9
+
+test put-creates-a-section {put creates a missing section} -body {
+    ini::get [ini::put [ini::parse "\[s\]\na = 1"] new k v] new k
+} -result v
+
+test put-into-the-global-section {put works on the global section} -body {
+    ini::get [ini::put [ini::parse ""] "" name app] "" name
+} -result app
+
+test put-is-immutable {put leaves the original untouched} -body {
+    set a [ini::parse "\[s\]\nk = 1"]
+    set b [ini::put $a s k 2]
+    list [ini::get $a s k] [ini::get $b s k]
+} -result {1 2}
+
+test put-rejects-a-blank-key {put rejects a blank key} -body {
+    ini::put [ini::parse ""] s "  " v
+} -returnCodes error -match glob -result {key cannot be blank}
+
+test put-allows-an-empty-value {an empty value is legitimate} -body {
+    ini::exists [ini::put [ini::parse ""] s k ""] s k
+} -result 1
+
+test remove-deletes {remove deletes a key} -body {
+    ini::exists [ini::remove [ini::parse "\[s\]\na = 1"] s a] s a
+} -result 0
+
+test remove-keeps-siblings {remove leaves other keys alone} -body {
+    ini::get [ini::remove [ini::parse "\[s\]\na = 1\nb = 2"] s a] s b
+} -result 2
+
+test remove-missing-is-not-an-error {removing what is absent is a no-op} -body {
+    ini::sections [ini::remove [ini::parse "\[s\]\na = 1"] s nope]
+} -result s
+
+test remove-missing-section-is-not-an-error {removing from a missing section is a no-op} -body {
+    ini::sections [ini::remove [ini::parse "\[s\]\na = 1"] nope k]
+} -result s
+
+test remove-is-immutable {remove leaves the original untouched} -body {
+    set a [ini::parse "\[s\]\nk = 1"]
+    set b [ini::remove $a s k]
+    list [ini::exists $a s k] [ini::exists $b s k]
+} -result {1 0}
+
+test remove-section-drops-everything {remove_section drops the whole section} -body {
+    ini::sections [ini::remove_section [ini::parse "\[s\]\na = 1\n\[t\]\nb = 2"] s]
+} -result t
+
+test remove-section-missing-is-not-an-error {removing an absent section is a no-op} -body {
+    ini::sections [ini::remove_section [ini::parse "\[s\]\na = 1"] nope]
+} -result s
+
+# --- merge -------------------------------------------------------------------
+
+test merge-overlay-wins {a key in both takes the overlay value} -body {
+    set base [ini::parse "\[s\]\na = 1"]
+    ini::get [ini::merge $base [ini::parse "\[s\]\na = 9"]] s a
+} -result 9
+
+test merge-keeps-base-only-keys {keys only in base survive} -body {
+    set base [ini::parse "\[s\]\na = 1\nb = 2"]
+    ini::get [ini::merge $base [ini::parse "\[s\]\na = 9"]] s b
+} -result 2
+
+test merge-adds-new-sections {a section only in the overlay is added} -body {
+    ini::get [ini::merge [ini::parse "\[s\]\na = 1"] [ini::parse "\[t\]\nc = 3"]] t c
+} -result 3
+
+test merge-is-per-key-not-per-section {merging does not replace a whole section} -body {
+    set merged [ini::merge [ini::parse "\[s\]\na = 1\nb = 2"] [ini::parse "\[s\]\nb = 9"]]
+    list [ini::get $merged s a] [ini::get $merged s b]
+} -result {1 9}
+
+test merge-with-empty-overlay {an empty overlay changes nothing} -body {
+    ini::get [ini::merge [ini::parse "\[s\]\na = 1"] [ini::parse ""]] s a
+} -result 1
+
+test merge-is-immutable {merge leaves the base untouched} -body {
+    set base [ini::parse "\[s\]\na = 1"]
+    ini::merge $base [ini::parse "\[s\]\na = 9"]
+    ini::get $base s a
+} -result 1
+
+test merge-chains {defaults, then site, then overrides} -body {
+    set merged [ini::merge \
+        [ini::merge [ini::parse "\[s\]\na = 1\nb = 1\nc = 1"] \
+                    [ini::parse "\[s\]\nb = 2\nc = 2"]] \
+        [ini::parse "\[s\]\nc = 3"]]
+    list [ini::get $merged s a] [ini::get $merged s b] [ini::get $merged s c]
+} -result {1 2 3}
+
+# --- the reason these are not called set/unset -------------------------------
+
+# A proc named `set` in this namespace would shadow the builtin for every other
+# proc in it, since Tcl resolves an unqualified name in the current namespace
+# first. ini::parse opens with `set result [dict create]`, so it would break.
+test parse-still-works-after-mutators-exist {defining mutators did not shadow the builtin set} -body {
+    ini::get [ini::parse "\[s\]\nk = v"] s k
+} -result v
+
+test mutators-round-trip-through-serialize {a mutated config serialises and reparses} -body {
+    set c [ini::put [ini::put [ini::parse ""] server host example.com] server port 8080]
+    set back [ini::parse [ini::serialize $c]]
+    list [ini::get $back server host] [ini::get $back server port]
+} -result {example.com 8080}
+
 cleanupTests
