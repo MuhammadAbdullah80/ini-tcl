@@ -27,6 +27,10 @@ header live in the section named `""`.
 | `ini::sections config` | section names, global first if used, then sorted |
 | `ini::keys config section` | keys in the order they were written |
 | `ini::serialize config` | INI text |
+| `ini::put config section key value` | a copy with the key set |
+| `ini::remove config section key` | a copy without that key |
+| `ini::remove_section config section` | a copy without that section |
+| `ini::merge base overlay` | a copy of base with overlay applied per key |
 
 ## Decisions
 
@@ -61,13 +65,34 @@ would not survive a round trip are quoted on the way out, so
 Comments and original ordering are *not* preserved - this parses configuration,
 it is not a round-tripping editor.
 
+## Mutation
+
+Every mutator returns a new dict; nothing is modified in place.
+
+```tcl
+set config [ini::put $config server port 9090]
+set config [ini::remove $config server legacy_flag]
+
+# defaults, then site file, then overrides
+set effective [ini::merge [ini::merge $defaults $site] $overrides]
+```
+
+`ini::merge` combines per key, not per section — a section present in both keeps
+the base's keys except where the overlay names one.
+
+They are called `put` and `remove` rather than `set` and `unset` for a concrete
+reason: Tcl resolves an unqualified command name in the current namespace before
+the global one, so a proc named `ini::set` shadows the builtin `set` for every
+other proc in the namespace. `ini::parse` opens with `set result [dict create]`
+and would break with a wrong-arg-count error.
+
 ## Tests
 
 ```
 tclsh tests/ini_test.tcl
 ```
 
-45 tests via `tcltest`.
+68 tests via `tcltest`.
 
 One note for anyone extending them: Tcl dicts compare as their string
 representation, which carries insertion order. Two dicts holding identical data
